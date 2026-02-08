@@ -3,26 +3,33 @@ import fetch from "node-fetch";
 
 const UA = { "User-Agent": "Replayedle/1.0" };
 
-async function pickReplayLeaderboard() {
-  // Pull ranked leaderboards directly from BeatLeader
-  const page = Math.floor(Math.random() * 50);
+async function findReplayLeaderboard() {
+  console.log("🔍 Scanning BeatLeader leaderboards...");
 
-  const res = await fetch(
-    `https://api.beatleader.com/leaderboards?ranked=true&page=${page}&count=50`,
-    { headers: UA }
-  );
+  for (let page = 0; page < 10; page++) {
+    const res = await fetch(
+      `https://api.beatleader.com/leaderboards?page=${page}&count=100`,
+      { headers: UA }
+    );
 
-  if (!res.ok) throw new Error("Failed to fetch BeatLeader leaderboards");
+    if (!res.ok) continue;
 
-  const data = await res.json();
+    const json = await res.json();
+    if (!json.data?.length) continue;
 
-  const valid = data.data.filter(
-    lb => lb.replayCount > 5 && lb.songHash
-  );
+    const candidates = json.data.filter(lb =>
+      lb.ranked &&
+      lb.replayCount > 3 &&
+      lb.songHash &&
+      lb.difficultyName
+    );
 
-  if (!valid.length) throw new Error("No replay leaderboards found");
+    if (candidates.length) {
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+  }
 
-  return valid[Math.floor(Math.random() * valid.length)];
+  throw new Error("No replay leaderboards found after scanning pages");
 }
 
 async function getBeatSaverMap(hash) {
@@ -30,7 +37,6 @@ async function getBeatSaverMap(hash) {
     `https://api.beatsaver.com/maps/hash/${hash}`,
     { headers: UA }
   );
-
   if (!res.ok) return null;
   return res.json();
 }
@@ -39,14 +45,10 @@ async function getBeatSaverMap(hash) {
   try {
     console.log("🔍 Searching for ranked BeatLeader replay...");
 
-    const lb = await pickReplayLeaderboard();
-
-    console.log(
-      `✓ Found replayed leaderboard: ${lb.songName} (${lb.difficultyName})`
-    );
+    const lb = await findReplayLeaderboard();
+    console.log(`✓ Found: ${lb.songName} (${lb.difficultyName})`);
 
     const map = await getBeatSaverMap(lb.songHash);
-
     if (!map) throw new Error("BeatSaver metadata missing");
 
     const scoreRes = await fetch(
@@ -54,9 +56,12 @@ async function getBeatSaverMap(hash) {
       { headers: UA }
     );
 
-    const scores = await scoreRes.json();
+    const scoreData = await scoreRes.json();
+    if (!scoreData.data?.length)
+      throw new Error("No scores found for leaderboard");
+
     const score =
-      scores.data[Math.floor(Math.random() * scores.data.length)];
+      scoreData.data[Math.floor(Math.random() * scoreData.data.length)];
 
     const daily = {
       date: new Date().toISOString(),
@@ -74,7 +79,7 @@ async function getBeatSaverMap(hash) {
     if (!fs.existsSync("./docs")) fs.mkdirSync("./docs");
     fs.writeFileSync("./docs/data.json", JSON.stringify(daily, null, 2));
 
-    console.log("🎮 Daily level generated successfully!");
+    console.log("🎮 Daily level generated!");
     console.log(daily.replayUrl);
   } catch (err) {
     console.error("❌ Error generating daily level:", err);
