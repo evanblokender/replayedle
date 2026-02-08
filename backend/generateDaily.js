@@ -1,105 +1,81 @@
 import fs from "fs";
 import fetch from "node-fetch";
 
-async function pickRankedMapWithReplay() {
-  for (let attempt = 0; attempt < 40; attempt++) {
-    try {
-      const page = Math.floor(Math.random() * 80);
+const UA = { "User-Agent": "Replayedle/1.0" };
 
-      const res = await fetch(
-        `https://api.beatsaver.com/search/text/${page}?ranked=true`
-      );
-      const data = await res.json();
+async function pickReplayLeaderboard() {
+  // Pull ranked leaderboards directly from BeatLeader
+  const page = Math.floor(Math.random() * 50);
 
-      if (!data.docs?.length) continue;
+  const res = await fetch(
+    `https://api.beatleader.com/leaderboards?ranked=true&page=${page}&count=50`,
+    { headers: UA }
+  );
 
-      const map = data.docs[Math.floor(Math.random() * data.docs.length)];
-      const hash = map.versions[0].hash;
+  if (!res.ok) throw new Error("Failed to fetch BeatLeader leaderboards");
 
-      console.log(`Trying: ${map.metadata.songName} (${hash})`);
+  const data = await res.json();
 
-      // 🔥 NEW: ask BeatLeader for leaderboards
-      const mapRes = await fetch(
-        `https://api.beatleader.com/maps/hash/${hash}`,
-        { headers: { "User-Agent": "Replayedle/1.0" } }
-      );
+  const valid = data.data.filter(
+    lb => lb.replayCount > 5 && lb.songHash
+  );
 
-      if (!mapRes.ok) {
-        console.log("✗ No BeatLeader data");
-        continue;
-      }
+  if (!valid.length) throw new Error("No replay leaderboards found");
 
-      const mapData = await mapRes.json();
-      const leaderboards = mapData.leaderboards || [];
+  return valid[Math.floor(Math.random() * valid.length)];
+}
 
-      // Only leaderboards that actually HAVE replays
-      const validBoards = leaderboards.filter(
-        lb => lb.replayCount && lb.replayCount > 3
-      );
+async function getBeatSaverMap(hash) {
+  const res = await fetch(
+    `https://api.beatsaver.com/maps/hash/${hash}`,
+    { headers: UA }
+  );
 
-      if (!validBoards.length) {
-        console.log("✗ No replays found");
-        continue;
-      }
-
-      const board = validBoards[Math.floor(Math.random() * validBoards.length)];
-
-      // Get scores from that leaderboard
-      const scoresRes = await fetch(
-        `https://api.beatleader.com/leaderboard/${board.id}/scores?count=25`,
-        { headers: { "User-Agent": "Replayedle/1.0" } }
-      );
-
-      if (!scoresRes.ok) continue;
-
-      const scoresData = await scoresRes.json();
-      if (!scoresData.data?.length) continue;
-
-      const score =
-        scoresData.data[Math.floor(Math.random() * scoresData.data.length)];
-
-      console.log(`✓ Found replay on ${board.difficultyName}`);
-
-      return {
-        map,
-        hash,
-        leaderboardId: board.id,
-        difficulty: board.difficultyName,
-        scoreId: score.id
-      };
-    } catch (e) {
-      console.error("Attempt error:", e.message);
-    }
-  }
-
-  throw new Error("Could not find a valid map with replays after 40 attempts");
+  if (!res.ok) return null;
+  return res.json();
 }
 
 (async () => {
   try {
-    console.log("🔍 Searching for ranked map with replays...");
+    console.log("🔍 Searching for ranked BeatLeader replay...");
 
-    const { map, hash, scoreId, difficulty } =
-      await pickRankedMapWithReplay();
+    const lb = await pickReplayLeaderboard();
+
+    console.log(
+      `✓ Found replayed leaderboard: ${lb.songName} (${lb.difficultyName})`
+    );
+
+    const map = await getBeatSaverMap(lb.songHash);
+
+    if (!map) throw new Error("BeatSaver metadata missing");
+
+    const scoreRes = await fetch(
+      `https://api.beatleader.com/leaderboard/${lb.id}/scores?count=25`,
+      { headers: UA }
+    );
+
+    const scores = await scoreRes.json();
+    const score =
+      scores.data[Math.floor(Math.random() * scores.data.length)];
 
     const daily = {
       date: new Date().toISOString(),
       mapId: map.id,
-      mapHash: hash,
-      songName: map.metadata.songName,
-      songAuthor: map.metadata.songAuthorName,
+      mapHash: lb.songHash,
+      songName: lb.songName,
+      songAuthor: lb.songAuthorName,
       mapper: map.metadata.levelAuthorName,
-      difficulty,
-      scoreId,
-      replayUrl: `https://replay.beatleader.xyz/?scoreId=${scoreId}`
+      difficulty: lb.difficultyName,
+      leaderboardId: lb.id,
+      scoreId: score.id,
+      replayUrl: `https://replay.beatleader.xyz/?scoreId=${score.id}`
     };
 
     if (!fs.existsSync("./docs")) fs.mkdirSync("./docs");
     fs.writeFileSync("./docs/data.json", JSON.stringify(daily, null, 2));
 
-    console.log("🎮 Daily level generated!");
-    console.log(`Song: ${daily.songName}`);
-    console.log(`Replay: ${daily.replayUrl}`);
+    console.log("🎮 Daily level generated successfully!");
+    console.log(daily.replayUrl);
   } catch (err) {
     console.error("❌ Error generating daily level:", err);
     process.exit(1);
