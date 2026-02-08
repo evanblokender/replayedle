@@ -1,0 +1,12 @@
+{
+  "name": "replayedle",
+  "version": "1.0.0",
+  "description": "Guess the Beat Saber level from BeatLeader replay gameplay",
+  "type": "module",
+  "scripts": {
+    "daily": "node backend/generateDaily.js"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.0"
+  }
+}
